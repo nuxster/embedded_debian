@@ -33,8 +33,7 @@ if [ $# -lt 1 ]; then
 	exit 1
 fi
 
-
-#  
+# Общие  
 BUILD_CATALOG="/tmp/my_image/"
 TARGET_CATALOG="$BUILD_CATALOG/mnt/"
 IMG_NAME="hdd.img"
@@ -91,12 +90,10 @@ q
 EOF
 
 # Вывод информации о разделах
-#fdisk -l $LOOP_DEV
 kpartx -l $DEVICE
 sleep 5
 
 # Инициализация разделов
-#partx -v -a $LOOP_DEV
 kpartx -a $DEVICE
 sleep 5
 
@@ -175,10 +172,6 @@ chroot $TARGET_CATALOG mount -t sysfs none /sys
 
 LANG=C DEBIAN_FRONTEND=noninteractive chroot $TARGET_CATALOG apt-get install -y -q linux-image-$ARCH grub-legacy
 
-#chroot $TARGET_CATALOG grub-install $DISK
-#chroot $TARGET_CATALOG update-grub
-
-
 mkdir -p $TARGET_CATALOG/boot/grub
 cat > $TARGET_CATALOG/boot/grub/device.map <<EOF
 (hd0)   /dev/loop0
@@ -190,24 +183,11 @@ grub-install --no-floppy --grub-mkdevicemap=$TARGET_CATALOG/boot/grub/device.map
 
 chroot $TARGET_CATALOG grub-mkconfig -o /boot/grub/grub.cfg
 
-#cat <<EOF > $TARGET_CATALOG/boot/grub/grub.cfg 
-#set default="0"
-#set timeout="3"
-#
-#menuentry "Debian" {
-#    insmod gzio
-#    insmod part_msdos
-#    insmod ext2
-#    linux (hd0,msdos1)/vmlinuz-3.16.0-4-586 root=/dev/sda1 rw console=tty0 console=ttyS0
-#}
-#EOF
-
 echo "Укажите пароль пользователя root: "
 while ! chroot $TARGET_CATALOG passwd root
 do
 	echo "Повторите еще раз"
 done
-
 
 chroot $TARGET_CATALOG umount /proc 
 chroot $TARGET_CATALOG umount /sys
@@ -219,5 +199,3 @@ kpartx -d $DEVICE
 echo "ГОТОВО!\n"
 
 exit 0
-
-
