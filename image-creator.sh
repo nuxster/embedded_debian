@@ -1,5 +1,6 @@
 #!/bin/sh
 
+# Индикация при выполнении процесса
 spinner()
 {
     local pid=$1
@@ -23,7 +24,7 @@ fi
 
 # Установка необходимого софта
 if [ ! $(which debootstrap) ];then
-        apt-get -y -q install debootstrap
+        apt-get -y -q install debootstrap kpartx
 fi
 
 # Справка по параметрам запуска
@@ -40,10 +41,12 @@ IMG_NAME="hdd.img"
 IMG_SIZE=$1
 DEVICE=$BUILD_CATALOG$IMG_NAME
 DISK="/dev/sda" 
+LOOP_DEV="/dev/loop1"
+LOOP_PART_1="p1"
 
 # Debootstrap
 ARCH_DBS="i386"
-ARCH="686"
+ARCH="486"
 INCLUDE="vim,less,openssh-server,acpid,apt-utils"
 EXTCLUDE="manpages,man-db,info,texinfo,rsyslog"
 VARIANT="minbase"
@@ -71,39 +74,47 @@ else
 	spinner $!
 fi
 
+#losetup $LOOP_DEV $DEVICE
+
 #Создание файловой системы
-sed -e 's/\t\([\+0-9a-zA-Z]*\)[ \t].*/\1/' << EOF | fdisk ${DEVICE} 
+sed -e 's/\t\([\+0-9a-zA-Z]*\)[ \t].*/\1/' << EOF | fdisk $DEVICE
 o 
 n 
 p
 1
 
 
-1
-1
+a
 w
 q
 
 EOF
-fdisk -l $DEVICE
 
-echo "\n\n"
-mkfs.ext4 -F -q $DEVICE || echo "Ошибка!\n Не могу создать файловую систему."
+# Вывод информации о разделах
+#fdisk -l $LOOP_DEV
+kpartx -l $DEVICE
+sleep 5
+
+# Инициализация разделов
+#partx -v -a $LOOP_DEV
+kpartx -a $DEVICE
+sleep 5
+
+mkfs.ext4 -F -q /dev/mapper/loop0p1 || echo "Ошибка!\n Не могу создать файловую систему."
+sleep 5
+fsck.ext4 /dev/mapper/loop0p1
 
 # Монтирование
-echo "\n\n"
-mount $DEVICE $BUILD_CATALOG/mnt || echo "Ошибка!\n Не могу смонтировать образ."
-
+mount -t ext4 /dev/mapper/loop0p1 $BUILD_CATALOG/mnt || echo "Ошибка!\n Не могу смонтировать устройство."
 
 # Развертывание базовой системы
 debootstrap --arch $ARCH_DBS --include $INCLUDE --exclude $EXCLUDE --variant=$VARIANT $RELEASE $TARGET_CATALOG $MIRROR
-
 
 echo "Задание основных параметров системы ..."
 
 # Монтирование
 cat <<EOF > $TARGET_CATALOG/etc/fstab
-#/dev/sda1 /boot               ext4    sync 0       2
+#/dev/sda1 /boot               ext4    sync 		 0       2
 /dev/sda1  /                   ext4    errors=remount-ro 0       1
 EOF
 
@@ -157,16 +168,39 @@ deb http://ftp.psn.ru/debian/ stable-updates main contrib non-free
 #deb http://www.deb-multimedia.org stable-backports main
 EOF
 
-
 #
 mount --bind /dev/ $TARGET_CATALOG/dev
 chroot $TARGET_CATALOG mount -t proc none /proc 
 chroot $TARGET_CATALOG mount -t sysfs none /sys
 
-LANG=C DEBIAN_FRONTEND=noninteractive chroot $TARGET_CATALOG apt-get install -y -q linux-image-$ARCH grub-pc
+LANG=C DEBIAN_FRONTEND=noninteractive chroot $TARGET_CATALOG apt-get install -y -q linux-image-$ARCH grub-legacy
 
-chroot $TARGET_CATALOG grub-install $DISK
-chroot $TARGET_CATALOG update-grub
+#chroot $TARGET_CATALOG grub-install $DISK
+#chroot $TARGET_CATALOG update-grub
+
+
+mkdir -p $TARGET_CATALOG/boot/grub
+cat > $TARGET_CATALOG/boot/grub/device.map <<EOF
+(hd0)   /dev/loop0
+EOF
+
+#grub-install --no-floppy --root-directory=$TARGET_CATALOG /dev/loop0
+
+grub-install --no-floppy --grub-mkdevicemap=$TARGET_CATALOG/boot/grub/device.map --root-directory=$TARGET_CATALOG /dev/loop0
+
+chroot $TARGET_CATALOG grub-mkconfig -o /boot/grub/grub.cfg
+
+#cat <<EOF > $TARGET_CATALOG/boot/grub/grub.cfg 
+#set default="0"
+#set timeout="3"
+#
+#menuentry "Debian" {
+#    insmod gzio
+#    insmod part_msdos
+#    insmod ext2
+#    linux (hd0,msdos1)/vmlinuz-3.16.0-4-586 root=/dev/sda1 rw console=tty0 console=ttyS0
+#}
+#EOF
 
 echo "Укажите пароль пользователя root: "
 while ! chroot $TARGET_CATALOG passwd root
@@ -174,4 +208,16 @@ do
 	echo "Повторите еще раз"
 done
 
+
+chroot $TARGET_CATALOG umount /proc 
+chroot $TARGET_CATALOG umount /sys
+umount $TARGET_CATALOG/dev
+umount $BUILD_CATALOG/mnt
+
+kpartx -d $DEVICE
+
 echo "ГОТОВО!\n"
+
+exit 0
+
+
